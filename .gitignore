@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+
+# Virtual environment
+.venv/
+.env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data (ignore actual datasets)
+data/*
+!data/.gitkeep
+
+# Reports (ignore outputs, keep folder structure)
+reports/*
+!reports/.gitkeep
+
