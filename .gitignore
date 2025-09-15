@@ -18,11 +18,8 @@ __pycache__/
 data/*
 !data/.gitkeep
 
-# Reports (ignore outputs, keep folder structure)
-reports/*
-!reports/.gitkeep
 
-# Reports
+#Allow JSON and PNG results in reports 
 reports/*.log
 reports/*.tmp
 
