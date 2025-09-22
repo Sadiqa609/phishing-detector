@@ -20,18 +20,6 @@ DATA_PATH = Path("data/processed/emails_merged.csv")
 REPORTS_DIR = Path("reports")
 SUSPICIOUS_KWS = ("login", "verify", "update", "confirm", "password", "bank", "secure")
 
- # Show URL feature values
- st.markdown("**URL feature values**")
-    try:
-        ufeats = pipe.url.transform([email_text])[0] if email_text.strip() else {}
-        if ufeats:
-            st.table(pd.DataFrame([ufeats]))
-        else:
-            st.write("— none —")
-    except Exception:
-        st.write("— not available —")
-
-
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
@@ -62,11 +50,15 @@ def read_eml_bytes(data: bytes) -> str:
             for part in msg.walk():
                 ct = part.get_content_type()
                 if ct == "text/plain":
-                    try: plains.append(part.get_content())
-                    except Exception: pass
+                    try:
+                        plains.append(part.get_content())
+                    except Exception:
+                        pass
                 elif ct == "text/html":
-                    try: htmls.append(part.get_content())
-                    except Exception: pass
+                    try:
+                        htmls.append(part.get_content())
+                    except Exception:
+                        pass
             body = "\n".join(plains) if plains else "\n".join(htmls)
         else:
             ct = msg.get_content_type()
@@ -74,10 +66,9 @@ def read_eml_bytes(data: bytes) -> str:
                 body = msg.get_content()
             elif ct == "text/html":
                 body = msg.get_content()
-        text = (("\n".join(parts + [body])) if body else "\n".join(parts)).strip()
-        return text
+        txt = (("\n".join(parts + [body])) if body else "\n".join(parts)).strip()
+        return txt
     except Exception:
-        # not a real EML, try decode to text
         try:
             return data.decode("utf-8", errors="ignore")
         except Exception:
@@ -86,7 +77,7 @@ def read_eml_bytes(data: bytes) -> str:
 pipe = get_pipeline()
 
 # -----------------------------------------------------------------------------
-# Sidebar — model/data info
+# Sidebar — model/data info and saved results
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.header("Model & Data")
@@ -94,7 +85,7 @@ with st.sidebar:
     if DATA_PATH.exists():
         try:
             dhead = pd.read_csv(DATA_PATH, nrows=500)
-            st.write("Dataset sample rows:", len(dhead))
+            st.write("Sample rows:", len(dhead))
             if "label" in dhead.columns:
                 c1 = int(dhead["label"].sum())
                 st.write("Class balance — phish(1):", c1, " | ham(0):", len(dhead) - c1)
@@ -102,7 +93,7 @@ with st.sidebar:
             st.write("Dataset info unavailable.")
     st.markdown("---")
     if REPORTS_DIR.joinpath("results.csv").exists():
-        st.markdown("**Latest results**")
+        st.markdown("**Latest results (test)**")
         try:
             res = pd.read_csv(REPORTS_DIR / "results.csv")
             st.dataframe(res, use_container_width=True, height=180)
@@ -119,8 +110,10 @@ c1, c2 = st.columns([2, 1])
 
 with c1:
     email_text = st.text_area("Email text (subject + body)", height=260, placeholder="Paste email content here…")
-    threshold = st.slider("Decision threshold", 0.10, 0.90, 0.50, 0.01,
-                          help="Lower to catch more phishing (higher recall). Raise to reduce false alarms.")
+    threshold = st.slider(
+        "Decision threshold", 0.10, 0.90, 0.50, 0.01,
+        help="Lower to catch more phishing (higher recall). Raise to reduce false alarms."
+    )
 
     if st.button("Predict", type="primary"):
         if not email_text.strip():
@@ -135,7 +128,8 @@ with c1:
             st.markdown("**Extracted URLs**")
             urls = extract_urls(email_text)
             if urls:
-                for u in urls: st.write("•", u)
+                for u in urls:
+                    st.write("•", u)
             else:
                 st.write("— none —")
 
@@ -143,34 +137,41 @@ with c1:
             hits = find_keywords(email_text)
             st.write(", ".join(hits) if hits else "— none —")
 
+            # URL feature values (explainability)
+            st.markdown("**URL feature values**")
+            try:
+                ufeats = pipe.url.transform([email_text])[0]
+                st.table(pd.DataFrame([ufeats]))
+            except Exception:
+                st.write("— not available —")
+
 with c2:
-        st.markdown("**Top n-grams (explainability)**")
+    st.markdown("**Explainability**")
     try:
+        # Top n-grams from Logistic Regression coefficients
         vec = pipe.vec
         clf = pipe.clf
         if hasattr(clf, "coef_"):
             coef = clf.coef_[0]
             vocab = vec.get_feature_names_out()
-            top_pos = np.argsort(coef)[-8:][::-1]   # phishing indicators
-            top_neg = np.argsort(coef)[:8]          # ham indicators
-            st.caption("Strongest phishing indicators")
+            top_pos = np.argsort(coef)[-8:][::-1]   # strongest phishing indicators
+            top_neg = np.argsort(coef)[:8]          # strongest ham indicators
+            st.caption("Top phishing n-grams")
             st.table(pd.DataFrame({"ngram": vocab[top_pos], "coef": coef[top_pos]}))
-            st.caption("Strongest ham indicators")
+            st.caption("Top ham n-grams")
             st.table(pd.DataFrame({"ngram": vocab[top_neg], "coef": coef[top_neg]}))
     except Exception as e:
-        st.write("Explainability not available:", e)
+        st.write("Explainability unavailable:", e)
 
-
-    # Show URL feature vector values
     st.caption("URL feature values")
-    try:
-        ufeats = pipe.url.transform([email_text])[0] if email_text.strip() else {}
-        if ufeats:
+    if 'email_text' in locals() and email_text.strip():
+        try:
+            ufeats = pipe.url.transform([email_text])[0]
             st.table(pd.DataFrame([ufeats]))
-        else:
-            st.write("— enter text to compute —")
-    except Exception:
-        st.write("— not available —")
+        except Exception:
+            st.write("— not available —")
+    else:
+        st.write("— enter text to compute —")
 
 # -----------------------------------------------------------------------------
 # Batch / .eml upload
@@ -191,16 +192,30 @@ if files:
                     body = str(r.get("body", "")).strip()
                     if body:
                         p = pipe.predict_proba_one(body)
-                        rows.append({"source": name, "prob": p, "pred": int(p >= 0.5), "body": body[:120] + ("…" if len(body) > 120 else "")})
+                        rows.append({
+                            "source": name,
+                            "prob": p,
+                            "pred": int(p >= 0.5),
+                            "body": body[:120] + ("…" if len(body) > 120 else "")
+                        })
                 continue
             except Exception:
                 txt = data.decode("utf-8", errors="ignore")
         else:
             txt = data.decode("utf-8", errors="ignore")
         p = pipe.predict_proba_one(txt) if txt else 0.0
-        rows.append({"source": name, "prob": p, "pred": int(p >= 0.5), "body": (txt[:120] + ("…" if len(txt) > 120 else ""))})
+        rows.append({
+            "source": name,
+            "prob": p,
+            "pred": int(p >= 0.5),
+            "body": (txt[:120] + ("…" if len(txt) > 120 else ""))
+        })
     out = pd.DataFrame(rows)
     st.dataframe(out, use_container_width=True)
-    st.download_button("Download results CSV", out.to_csv(index=False).encode("utf-8"),
-                       "predictions.csv", "text/csv")
+    st.download_button(
+        "Download results CSV",
+        out.to_csv(index=False).encode("utf-8"),
+        "predictions.csv",
+        "text/csv"
+    )
 
