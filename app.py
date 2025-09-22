@@ -1,13 +1,12 @@
 from __future__ import annotations
 from pathlib import Path
 import io
-import json
 import numpy as np
 import pandas as pd
 import streamlit as st
 
 from phishdetect.predictor import load_pipeline
-from phishdetect.features.urls import extract_urls, URLFeaturizer
+from phishdetect.features.urls import extract_urls
 
 # -----------------------------------------------------------------------------
 # Page setup (SINGLE header)
@@ -50,15 +49,11 @@ def read_eml_bytes(data: bytes) -> str:
             for part in msg.walk():
                 ct = part.get_content_type()
                 if ct == "text/plain":
-                    try:
-                        plains.append(part.get_content())
-                    except Exception:
-                        pass
+                    try: plains.append(part.get_content())
+                    except Exception: pass
                 elif ct == "text/html":
-                    try:
-                        htmls.append(part.get_content())
-                    except Exception:
-                        pass
+                    try: htmls.append(part.get_content())
+                    except Exception: pass
             body = "\n".join(plains) if plains else "\n".join(htmls)
         else:
             ct = msg.get_content_type()
@@ -92,14 +87,14 @@ with st.sidebar:
         except Exception:
             st.write("Dataset info unavailable.")
     st.markdown("---")
-    if REPORTS_DIR.joinpath("results.csv").exists():
+    if (REPORTS_DIR / "results.csv").exists():
         st.markdown("**Latest results (test)**")
         try:
             res = pd.read_csv(REPORTS_DIR / "results.csv")
             st.dataframe(res, use_container_width=True, height=180)
         except Exception:
             st.write("Could not read results.csv.")
-    if REPORTS_DIR.joinpath("roc_curves.png").exists():
+    if (REPORTS_DIR / "roc_curves.png").exists():
         st.image(str(REPORTS_DIR / "roc_curves.png"), caption="ROC curves", use_column_width=True)
 
 # -----------------------------------------------------------------------------
@@ -120,16 +115,15 @@ with c1:
             st.warning("Paste some email text first.")
         else:
             prob = pipe.predict_proba_one(email_text)
-            pred = int(prob >= threshold)
+            label = "Phishing" if prob >= threshold else "Ham"
 
             st.metric("Phishing probability", f"{prob:.3f}")
-            (st.error if pred == 1 else st.success)("Label: Phishing (1)" if pred == 1 else "Label: Ham / Legit (0)")
+            (st.error if label == "Phishing" else st.success)(f"Label: {label}")
 
             st.markdown("**Extracted URLs**")
             urls = extract_urls(email_text)
             if urls:
-                for u in urls:
-                    st.write("•", u)
+                for u in urls: st.write("•", u)
             else:
                 st.write("— none —")
 
@@ -174,48 +168,100 @@ with c2:
         st.write("— enter text to compute —")
 
 # -----------------------------------------------------------------------------
-# Batch / .eml upload
+# Batch / .eml upload  (upload message + Predict button + badges + CSV download)
 # -----------------------------------------------------------------------------
 st.subheader("Batch classify / .eml upload")
-files = st.file_uploader("Upload .eml files or a CSV with a 'body' column", accept_multiple_files=True)
-if files:
-    rows = []
-    for f in files:
-        name = f.name
-        data = f.read()
-        if name.lower().endswith(".eml"):
-            txt = read_eml_bytes(data)
-        elif name.lower().endswith(".csv"):
-            try:
-                df_in = pd.read_csv(io.StringIO(data.decode("utf-8", errors="ignore")))
-                for _, r in df_in.iterrows():
-                    body = str(r.get("body", "")).strip()
-                    if body:
+
+# 1) User selects files
+files = st.file_uploader(
+    "Upload .eml files or a CSV with a 'body' column",
+    accept_multiple_files=True,
+    key="batch_files"
+)
+
+# 2) Immediate feedback after upload
+status = st.empty()
+if files and len(files) > 0:
+    status.success(f"✅ {len(files)} file(s) uploaded. Click **Predict** to analyze.")
+else:
+    status.info("Upload one or more .eml files, or a CSV with a 'body' column, then click Predict.")
+
+# 3) Only process when user clicks Predict
+if st.button("Predict", type="primary", help="Run prediction on uploaded files"):
+    if not files or len(files) == 0:
+        st.warning("Please upload at least one file first.")
+    else:
+        rows = []
+        for f in files:
+            name = f.name
+            data = f.read()
+
+            # .eml branch
+            if name.lower().endswith(".eml"):
+                txt = read_eml_bytes(data)
+
+            # CSV branch (expects 'body' column)
+            elif name.lower().endswith(".csv"):
+                try:
+                    df_in = pd.read_csv(io.StringIO(data.decode("utf-8", errors="ignore")))
+                    for _, r in df_in.iterrows():
+                        body = str(r.get("body", "")).strip()
+                        if not body:
+                            continue
                         p = pipe.predict_proba_one(body)
+                        plain_label = "Phishing" if p >= 0.5 else "Ham"
                         rows.append({
-                            "source": name,
+                            "label": plain_label,  # plain text for CSV download
+                            "label_html": (
+                                f"<span style='color:white; background-color:#d9534f; padding:2px 6px; border-radius:4px;'>Phishing</span>"
+                                if plain_label == "Phishing"
+                                else f"<span style='color:white; background-color:#5cb85c; padding:2px 6px; border-radius:4px;'>Ham</span>"
+                            ),
                             "prob": p,
-                            "pred": int(p >= 0.5),
+                            "source": name,
                             "body": body[:120] + ("…" if len(body) > 120 else "")
                         })
-                continue
-            except Exception:
+                    # move on to next uploaded file
+                    continue
+                except Exception:
+                    # if parsing CSV fails, fall back to plain text
+                    txt = data.decode("utf-8", errors="ignore")
+
+            # plain text fallback for anything else
+            else:
                 txt = data.decode("utf-8", errors="ignore")
-        else:
-            txt = data.decode("utf-8", errors="ignore")
-        p = pipe.predict_proba_one(txt) if txt else 0.0
-        rows.append({
-            "source": name,
-            "prob": p,
-            "pred": int(p >= 0.5),
-            "body": (txt[:120] + ("…" if len(txt) > 120 else ""))
-        })
-    out = pd.DataFrame(rows)
-    st.dataframe(out, use_container_width=True)
-    st.download_button(
-        "Download results CSV",
-        out.to_csv(index=False).encode("utf-8"),
-        "predictions.csv",
-        "text/csv"
-    )
+
+            # Single-text path (eml/plain)
+            p = pipe.predict_proba_one(txt) if txt else 0.0
+            plain_label = "Phishing" if p >= 0.5 else "Ham"
+            rows.append({
+                "label": plain_label,
+                "label_html": (
+                    f"<span style='color:white; background-color:#d9534f; padding:2px 6px; border-radius:4px;'>Phishing</span>"
+                    if plain_label == "Phishing"
+                    else f"<span style='color:white; background-color:#5cb85c; padding:2px 6px; border-radius:4px;'>Ham</span>"
+                ),
+                "prob": p,
+                "source": name,
+                "body": txt[:120] + ("…" if len(txt) > 120 else "")
+            })
+
+        # Assemble results table
+        out = pd.DataFrame(rows)
+
+        # Order columns for display & CSV
+        csv_out = out[["label", "prob", "source", "body"]]
+        display_out = out[["label_html", "prob", "source", "body"]].rename(columns={"label_html": "label"})
+
+        st.success(f"✅ Predictions complete for {len(out)} item(s).")
+
+        # Use HTML to render badges professionally
+        st.write(display_out.to_html(index=False, escape=False), unsafe_allow_html=True)
+
+        st.download_button(
+            "Download results CSV",
+            csv_out.to_csv(index=False).encode("utf-8"),
+            "predictions.csv",
+            "text/csv"
+        )
 
