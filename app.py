@@ -20,6 +20,18 @@ DATA_PATH = Path("data/processed/emails_merged.csv")
 REPORTS_DIR = Path("reports")
 SUSPICIOUS_KWS = ("login", "verify", "update", "confirm", "password", "bank", "secure")
 
+ # Show URL feature values
+ st.markdown("**URL feature values**")
+    try:
+        ufeats = pipe.url.transform([email_text])[0] if email_text.strip() else {}
+        if ufeats:
+            st.table(pd.DataFrame([ufeats]))
+        else:
+            st.write("— none —")
+    except Exception:
+        st.write("— not available —")
+
+
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
@@ -132,20 +144,22 @@ with c1:
             st.write(", ".join(hits) if hits else "— none —")
 
 with c2:
-    st.markdown("**Explainability**")
+        st.markdown("**Top n-grams (explainability)**")
     try:
-        # Top n-grams from Logistic Regression coefficients
-        vec = pipe.vec; clf = pipe.clf
+        vec = pipe.vec
+        clf = pipe.clf
         if hasattr(clf, "coef_"):
-            coef = clf.coef_[0]; vocab = vec.get_feature_names_out()
-            top_pos = np.argsort(coef)[-8:][::-1]
-            top_neg = np.argsort(coef)[:8]
-            st.caption("Top positive n-grams (→ phishing)")
+            coef = clf.coef_[0]
+            vocab = vec.get_feature_names_out()
+            top_pos = np.argsort(coef)[-8:][::-1]   # phishing indicators
+            top_neg = np.argsort(coef)[:8]          # ham indicators
+            st.caption("Strongest phishing indicators")
             st.table(pd.DataFrame({"ngram": vocab[top_pos], "coef": coef[top_pos]}))
-            st.caption("Top negative n-grams (→ ham)")
+            st.caption("Strongest ham indicators")
             st.table(pd.DataFrame({"ngram": vocab[top_neg], "coef": coef[top_neg]}))
     except Exception as e:
-        st.write("Explainability unavailable:", e)
+        st.write("Explainability not available:", e)
+
 
     # Show URL feature vector values
     st.caption("URL feature values")
