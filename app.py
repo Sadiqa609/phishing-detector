@@ -95,7 +95,7 @@ with st.sidebar:
         except Exception:
             st.write("Could not read results.csv.")
     if (REPORTS_DIR / "roc_curves.png").exists():
-        st.image(str(REPORTS_DIR / "roc_curves.png"), caption="ROC curves", use_column_width=True)
+        st.image(str(REPORTS_DIR / "roc_curves.png"), caption="ROC curves", use_container_width=True)
 
 # -----------------------------------------------------------------------------
 # Main — single email classification
