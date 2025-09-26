@@ -88,7 +88,7 @@ The app provides:
 
 Single email classification (paste text → get prediction).
 
-Batch classification (upload CSV → download predictions).
+Batch classification (upload CSV , eml → download predictions).
 
 Explainability (view top phishing/ham n-grams).
 
